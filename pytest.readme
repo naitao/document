@@ -1,0 +1,111 @@
+ pytest学习笔记（一）
+
+这两天在学习pytest，之前有小用到pytest，觉得这个测试框架很灵巧，用在实现接口自动化（pytest+requests）非常的轻便，然后很有兴致的决定学习下，然后又发现了pytest-selenium这么个神奇的东东，加上pytest-rerunfailures失败case自动执行，pytest-html完美测试报告生成，完全就解决了我的selenium测试中的难点，仔细研读了下pytest的英文文档，发现这个框架和丰富的plugins真的很好用，所以决心仔细研究下pytest，下面就开始pytest的学习吧。
+
+（一）介绍
+
+  pytest是一个非常成熟的全功能的Python测试框架，主要特点有以下几点：1、简单灵活，容易上手；2、支持参数化；3、能够支持简单的单元测试和复杂的功能测试，还可以用来做selenium/appnium等自动化测试、接口自动化测试（pytest+requests）;4、pytest具有很多第三方插件，并且可以自定义扩展，比较好用的如pytest-selenium（集成selenium）、pytest-html（完美html测试报告生成）、pytest-rerunfailures（失败case重复执行）、pytest-xdist（多CPU分发）等；5、测试用例的skip和xfail处理；6、可以很好的和jenkins集成；（二）安装
+
+　　pip install -U pytest 
+
+　　pip install -U pytest-html
+
+　　pip install -U pytest-rerunfailures
+
+此外还有很多很好的第三方插件，请到http://plugincompat.herokuapp.com/ 和 https://pypi.python.org/pypi?%3Aaction=search&term=pytest-&submit=search 查找
+
+（三）例子
+
+这里列几个pytest-document中的例子
+
+1、默认执行当前目录下的所有以test_为前缀(test_*.py)或以_test为后缀(*_test.py)的文件中以test_为前缀的函数
+复制代码
+
+import pytest
+
+# content of test_sample.py
+def func(x):
+    return x + 1
+def test_answer():
+    assert func(3) == 5
+
+复制代码
+
+运行 py.test  或 指定特定文件 py.test -q test_sample.py
+
+2、使用类来组成多个用例的
+复制代码
+
+import pytest
+
+# content of test_class.py
+class TestClass:
+    def test_one(self):
+
+        x = "this"
+    assert 'h' in x
+    def test_two(self):
+        x = "hello"
+        assert hasattr(x, 'check')
+
+复制代码
+
+3、在python中调用pytest: python test_class.py
+复制代码
+
+import pytest
+
+# content of test_class.py
+class TestClass:
+    def test_one(self):
+        print 'one'
+        x = "this"
+        assert 'h' in x
+    def test_two(self):
+        print 'two'
+        x = "hello"
+        assert hasattr(x, 'check')
+if __name__ == '__main__':
+    pytest.main("-q --html=a.html")
+
+复制代码
+
+4、来个支持参数化的例子，参数化使用pytest.mark.parametrize的参数，第一个为变量的元组，第二个是变量赋值的元组列表，具体下面的章节会仔细介绍
+复制代码
+
+# content of test_time.py
+import pytest
+from datetime import datetime, timedelta
+
+testdata = [
+(datetime(2001, 12, 12), datetime(2001, 12, 11), timedelta(1)),
+(datetime(2001, 12, 11), datetime(2001, 12, 12), timedelta(-1)),
+]
+
+@pytest.mark.parametrize("a,b,expected", testdata)
+def test_timedistance_v0(a, b, expected):
+    diff = a - b
+    assert diff == expected
+    
+@pytest.mark.parametrize("a,b,expected", testdata, ids=["forward", "backward"])
+def test_timedistance_v1(a, b, expected):
+
+    diff = a - b
+    assert diff == expected
+    
+def idfn(val):
+    if isinstance(val, (datetime,)):
+    # note this wouldn't show any hours/minutes/seconds
+        return val.strftime('%Y%m%d')
+@pytest.mark.parametrize("a,b,expected", testdata, ids=idfn)
+def test_timedistance_v2(a, b, expected):
+    diff = a - b
+    assert diff == expected
+
+复制代码
+
+ 
+
+  以上对pytest做了入门的介绍，下一节再对pytest中的重点内容做介绍
+
+ 
