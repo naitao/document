@@ -468,3 +468,8 @@ markers =
     addopts = --pyargs
 
 好了，就这么多吧，下面的一些关于mocking的，有时间再来写
+
+Resource:
+http://www.cnblogs.com/sparkling-ly/p/5650413.html
+http://www.cnblogs.com/sparkling-ly/p/5660603.html
+http://www.cnblogs.com/sparkling-ly/p/5708575.html
