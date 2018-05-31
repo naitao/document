@@ -109,3 +109,362 @@ def test_timedistance_v2(a, b, expected):
   以上对pytest做了入门的介绍，下一节再对pytest中的重点内容做介绍
 
  
+  pytest学习笔记（二）
+
+继续文档的第二章
+
+（一）pytest中可以在命令行中静态/动态添加option，这里没什么好讲的，略过...
+
+        这里面主要讲下如何试用skip/xfail，还有incremental（包含一些列的测试步骤，如果某一步出错后，该步骤之后的所有步骤都没有任何意义了，xfail掉）
+
+1）首先来看下怎样通过命令行来skip一些case，首先要添加个option，然后使用@pytest.mark.skipif( condition) ， xfail使用@pytest.mark.xfail( condition,reson,run,raise),这里不详细介绍了
+
+ 
+复制代码
+
+import pytest
+def test_func_fast():
+    print 'fast'
+@pytest.mark.skipif(not pytest.config.getoption("--runslow"))
+def test_func_slow_1():
+    print 'skip slow'
+@pytest.mark.xfail(not pytest.config.getoption("--runslow"))
+def test_func_slow_2():
+    print 'xfail slow'
+
+复制代码
+
+2）然后来看下如何实现incremental，首先在测试文件的目录下创建conftest.py, 代码如下：
+复制代码
+
+# content of conftest.py
+
+import pytest
+
+def pytest_runtest_makereport(item, call):
+    if "incremental" in item.keywords:
+        if call.excinfo is not None:
+            parent = item.parent
+            parent._previousfailed = item
+
+def pytest_runtest_setup(item):
+    if "incremental" in item.keywords:
+        previousfailed = getattr(item.parent, "_previousfailed", None)
+        if previousfailed is not None:
+            pytest.xfail("previous test failed (%s)" %previousfailed.name)
+
+复制代码
+
+然后创建test_steps.py
+复制代码
+
+# content of test_step.py
+import pytest
+
+@pytest.mark.incremental
+class TestUserHandling:
+    def test_login(self, fix_err):
+        pass
+    def test_modification(self):
+        assert 0
+    def test_deletion(self):
+        pass
+def test_normal():
+    assert 0
+
+复制代码
+
+执行结果，在test_modification后的test_deletion 执行为x
+
+3）由于pytest中的Error也划分到Fail中，而Unittest中是单独讲Error独立出来，说明由于case中存在异常或错误导致case未能正常运行，其实在pytest中也可以做到这样，只需要加上一点儿代码，如下：
+复制代码
+
+# content of test_step.py
+import pytest
+
+@pytest.fixture
+def fix_err(x):
+    raise x
+
+@pytest.mark.incremental
+class TestUserHandling:
+    def test_modification(self):
+        pass
+    def test_login(self, fix_err):
+        try:
+            raise RuntimeError("error")
+        except AssertionError,e:
+            pass
+        except:
+            fix_err(e)
+    def test_deletion(self):
+        pass
+def test_normal():
+    assert 0
+
+复制代码
+
+其执行效果如下：
+
+(二）、这里讲下关于fixture，fixture是pytest特有的功能，它用pytest.fixture标识，定义在函数前面。在你编写测试函数的时候，你可以将此函数名称做为传入参数，pytest将会以依赖注入方式，将该函数的返回值作为测试函数的传入参数。例如上面的例子fix_err.
+
+1)准备函数usefixtures
+复制代码
+
+@pytest.fixture()
+def cleandir():
+    newpath = tempfile.mkdtemp()
+    os.chdir(newpath)
+
+@pytest.mark.usefixtures("cleandir")
+class TestDirectoryInit:
+    def test_cwd_starts_empty(self):
+        assert os.listdir(os.getcwd()) == []
+        with open("myfile", "w") as f:
+            f.write("hello")
+
+复制代码
+
+2）销毁函数addfinalizer
+复制代码
+
+@pytest.fixture()
+def smtp(request):
+    smtp = smtplib.SMTP("smtp.gmail.com")
+    def fin():
+        print ("teardown smtp")
+        smtp.close()
+    request.addfinalizer(fin)
+    return smtp  # provide the fixture value
+
+复制代码
+获取调用函数信息: request 使用fixture标记函数后，函数将默认接入一个request参数，它将包含使用该fixture函数的函数信息
+
+3）fixture的参数，有时我们需要全面测试多种不同条件下的一个对象，功能是否符合预期。我们可以通过params参数来指定传入的参数。
+复制代码
+
+class SMTP:
+    def __init__(self, smtp, sender, receiver):
+        self.smtp = smtp
+        self.sender = sender
+        self.receiver = receiver
+    def __del__(self):
+        self.smtp.close()
+
+@pytest.fixture(params=[["smtp.gmail.com", "from@domain.com", "to@doamin.com"], ["mail.python.org", "from@python.org", "to@python.org"])
+def smtp(request):
+    return SMTP(#param)
+
+def test_mail(smtp):
+    message = "hello"
+    assert smtp.sendmail(message)
+
+复制代码
+
+4）fixture的作用域：function、module、session ，autouse=True使得函数将默认执行
+复制代码
+
+work_dir = "/tmp/app"
+@pytest.fixture(session="session", autouse=True)
+def clean_workdir():
+    shutil.rmtree(work_dir)
+    os.mkdir(work_dir)
+    os.chrdir(work_dir)
+
+复制代码
+
+fixture的存在使得我们在编写测试函数的准备函数、销毁函数或者多个条件的测试提供了更加灵活的选择。py.test --fixtures 可以查看所有的fixtures，包含目录下及子目录下的conftest.py
+
+pytest.hookimpl这个没太看明白，应该就是个钩子函数，以后弄明白了再说，今天就到这儿了，下一节再说这个参数化的问题
+
+
+ pytest学习笔记（三）
+
+接着上一篇的内容，这里主要讲下参数化，pytest很好的支持了测试函数中变量的参数化
+
+一、pytest的参数化
+
+1、通过命令行来实现参数化
+
+  文档中给了一个简单的例子，
+
+test_compute.py 的测试函数如下：
+
+# content of test_compute.py
+def test_compute(param1):
+    assert param1 < 4
+
+在conftest.py中添加两个函数，一个是添加参数，一个是根据参数生成测试
+复制代码
+
+# content of conftest.py
+def pytest_addoption(parser):
+    parser.addoption("--all", action="store_true",help="run all combinations")
+
+def pytest_generate_tests(metafunc):
+    if 'param1' in metafunc.fixturenames:
+        if metafunc.config.option.all:    
+            end = 5
+        else:
+            end = 2
+        metafunc.parametrize("param1", range(end))        
+
+复制代码
+
+通过在命令行添加--all的option来实现参数化，执行py.test -q test_compute.py 会发现只有2个case，而执行 py.test -q test_compute.py --all 会执行5个case
+
+2、不同test IDs的参数化
+
+   在pytest会为每一组参数集合建立一个ID，可以试用-k来select匹配的名字子串，所以可以为不同的测试数据建立ID来区分不同的case，这个是经常使用的变量参数化，注意pytest.mark.parametrize（）的括号中的顺序，(变量名称，对应的(参数化元组)的数组，ID的数组) , 这样很好的解决了代码重复编写，减少了维护，可以很好的实现数据与代码想分离
+复制代码
+
+# content of test_time.py
+import pytest
+from datetime import datetime, timedelta
+testdata = [
+(datetime(2001, 12, 12), datetime(2001, 12, 11), timedelta(1)),
+(datetime(2001, 12, 11), datetime(2001, 12, 12), timedelta(-1)),
+]
+@pytest.mark.parametrize("a,b,expected", testdata)
+def test_timedistance_v0(a, b, expected):
+    diff = a - b
+    assert diff == expected
+@pytest.mark.parametrize("a,b,expected", testdata, ids=["forward", "backward"])
+def test_timedistance_v1(a, b, expected):
+    diff = a - b
+    assert diff == expected
+
+复制代码
+
+3、重要的资源参数化，这里面给了个case，是关于db的，觉得没太多可说的，就是一个简单的工厂，上代码了
+复制代码
+
+# content of conftest.py
+import pytest
+def pytest_generate_tests(metafunc):
+    if 'db' in metafunc.fixturenames:
+        metafunc.parametrize("db", ['d1', 'd2'], indirect=True)
+class DB1:
+    "one database object"
+class DB2:
+    "alternative database object"
+@pytest.fixture
+def db(request):
+    if request.param == "d1":
+        return DB1()
+    elif request.param == "d2":
+        return DB2()
+    else:
+        raise ValueError("invalid internal test config")
+
+复制代码
+
+4、通过类来实现测试函数的参数化，这个还是很有意义的，自己理解下吧，没什么难度
+复制代码
+
+# content of ./test_parametrize.py
+import pytest
+def pytest_generate_tests(metafunc):
+    # called once per each test function
+    funcarglist = metafunc.cls.params[metafunc.function.__name__]
+    argnames = list(funcarglist[0])
+    metafunc.parametrize(argnames, [[funcargs[name] for name in argnames] for funcargs in funcarglist])
+class TestClass:
+    # a map specifying multiple argument sets for a test method
+    params = {
+        'test_equals': [dict(a=1, b=2), dict(a=3, b=3), ],
+        'test_zerodivision': [dict(a=1, b=0), ],
+    }
+　　def test_equals(self, a, b):
+    　　assert a == b
+　　def test_zerodivision(self, a, b):
+    　　pytest.raises(ZeroDivisionError, "a/b")
+
+复制代码
+
+5、通过multiple fixtures来实现间接的参数化，文档中给了使用不同版本的python编译器的代码，有需求的自己看下吧
+复制代码
+
+"""
+module containing a parametrized tests testing cross-python
+serialization via the pickle module.
+"""
+import py
+import pytest
+import _pytest._code
+pythonlist = ['python2.6', 'python2.7', 'python3.3']
+@pytest.fixture(params=pythonlist)
+def python1(request, tmpdir):
+    picklefile = tmpdir.join("data.pickle")
+    return Python(request.param, picklefile)
+@pytest.fixture(params=pythonlist)
+def python2(request, python1):
+    return Python(request.param, python1.picklefile)
+class Python:
+    def __init__(self, version, picklefile):
+        self.pythonpath = py.path.local.sysfind(version)
+        if not self.pythonpath:
+            pytest.skip("%r not found" % (version,))
+        self.picklefile = picklefile
+    def dumps(self, obj):
+        dumpfile = self.picklefile.dirpath("dump.py")
+        dumpfile.write(_pytest._code.Source("""
+            import pickle
+            f = open(%r, 'wb')
+            s = pickle.dump(%r, f, protocol=2)
+            f.close()
+        """ % (str(self.picklefile), obj)))
+        py.process.cmdexec("%s %s" % (self.pythonpath, dumpfile))
+    def load_and_is_true(self, expression):
+        loadfile = self.picklefile.dirpath("load.py")
+        loadfile.write(_pytest._code.Source("""
+            import pickle
+            f = open(%r, 'rb')
+            obj = pickle.load(f)
+            f.close()
+            res = eval(%r)
+            if not res:
+            raise SystemExit(1)
+            """ % (str(self.picklefile), expression)))
+        print (loadfile)
+        py.process.cmdexec("%s %s" %(self.pythonpath, loadfile))
+@pytest.mark.parametrize("obj", [42, {}, {1:3},])
+def test_basic_objects(python1, python2, obj):
+    python1.dumps(obj)
+    python2.load_and_is_true("obj == %s" % obj)
+
+复制代码
+
+二、使用自定义的markers
+
+1、自定义一个mark，如下，然后 py.test -v -m webtest 只运行标记了webtest的函数， py.test -v -m "not webtest"  来运行未标记webtest的
+复制代码
+
+# content of test_server.py
+import pytest
+@pytest.mark.webtest
+def test_send_http():
+    pass # perform some webtest test for your app
+def test_something_quick():
+    pass
+def test_another():
+    pass
+class TestClass:
+    def test_method(self):
+        pass
+
+复制代码
+
+2、还可以通过-v 指定的函数ID， py.test -v test_server.py::TestClass::test_method 来运行指定的函数
+
+3、使用-k 来匹配名字子串， py.test -v -k http ， py.test -k "not send_http" -v
+
+4、在pytest.ini中注册markers
+
+# content of pytest.ini
+[pytest]
+markers =
+    webtest: mark a test as a webtest.
+    addopts = --pyargs
+
+好了，就这么多吧，下面的一些关于mocking的，有时间再来写
